@@ -5,6 +5,10 @@
 
 """Entry point for testing AttGAN network."""
 
+import coremltools as ct
+from coremltools.models.neural_network import quantization_utils
+
+from PIL import Image
 import argparse
 import json
 import os
@@ -15,18 +19,18 @@ import torch
 import torch.utils.data as data
 import torchvision.utils as vutils
 
-from attgan import AttGAN
+# from attgan import AttGAN
 from data import check_attribute_conflict
-from helpers import Progressbar
-from utils import find_model
+# from helpers import Progressbar
+# from utils import find_model
 
 def parse(args=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--experiment_name', dest='experiment_name', required=True)
+    parser.add_argument('--experiment_name', dest='experiment_name', default='384_shortcut1_inject1_none_hq')
     parser.add_argument('--test_int', dest='test_int', type=float, default=1.0)
     parser.add_argument('--num_test', dest='num_test', type=int)
     parser.add_argument('--load_epoch', dest='load_epoch', type=str, default='latest')
-    parser.add_argument('--custom_img', action='store_true')
+    parser.add_argument('--custom_img', action='store_true', default=True)
     parser.add_argument('--custom_data', type=str, default='./data/custom')
     parser.add_argument('--custom_attr', type=str, default='./data/list_attr_custom.txt')
     parser.add_argument('--gpu', action='store_true')
@@ -75,46 +79,26 @@ if args.num_test is None:
 else:
     print('Testing images:', min(len(test_dataset), args.num_test))
 
+mlmodel =  ct.models.MLModel('attgan16.mlmodel')
 
-attgan = AttGAN(args)
-attgan.load(find_model(join('output', args.experiment_name, 'checkpoint'), args.load_epoch))
-progressbar = Progressbar()
-
-attgan.eval()
 for idx, (img_a, att_a) in enumerate(test_dataloader):
-    if args.num_test is not None and idx == args.num_test:
-        break
-    
-    img_a = img_a.cuda() if args.gpu else img_a
-    att_a = att_a.cuda() if args.gpu else att_a
-    att_a = att_a.type(torch.float)
-    
-    att_b_list = [att_a]
-    for i in range(args.n_attrs):
-        tmp = att_a.clone()
-        tmp[:, i] = 1 - tmp[:, i]
-        tmp = check_attribute_conflict(tmp, args.attrs[i], args.attrs)
-        att_b_list.append(tmp)
+    # image = img_a
+    out_file = test_dataset.images[idx]
+    break
+# Bald Bangs Black_Hair Blond_Hair Brown_Hair Bushy_Eyebrows Eyeglasses Male Mouth_Slightly_Open Mustache No_Beard Pale_Skin Young
+att_b_= np.array([[-0.5, 0.5, 0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, 0.5, -0.5, 0.5]])
 
-   #Bald Bangs Black_Hair Blond_Hair Brown_Hair Bushy_Eyebrows Eyeglasses Male Mouth_Slightly_Open Mustache No_Beard Pale_Skin Young
-    with torch.no_grad():
-        samples = [img_a]
-        for i, att_b in enumerate(att_b_list):
-            att_b_ = (att_b * 2 - 1) * args.thres_int
-            if i > 0:
-                att_b_[..., i - 1] = att_b_[..., i - 1] * args.test_int / args.thres_int
-            if i == 13:
-                print("att_b_", i, att_b_)
-                att_b_= torch.from_numpy(np.array([[-0.5, 0.5, 0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5,  0.5, -0.5, 1.0]])).type(torch.float)
-                print("att_b_", i, att_b_)
-                samples.append(attgan.G(img_a, att_b_))
-        samples = torch.cat(samples, dim=3)
-        if args.custom_img:
-            out_file = test_dataset.images[idx]
-        else:
-            out_file = '{:06d}.jpg'.format(idx + 182638)
-        vutils.save_image(
-            samples, join(output_path, out_file),
-            nrow=1, normalize=True, range=(-1., 1.)
-        )
-        print('{:s} done!'.format(out_file))
+samples = [img_a]
+image = Image.open("data/custom/yui_aragaki.jpg").resize((384, 384))
+
+# image = img_a.numpy()
+# print(image.shape)
+out = mlmodel.predict({"image" :image, "style":att_b_}, useCPUOnly=True)
+
+print(out.keys())
+key = list(out.keys())[0]
+print(out[key].shape)
+vutils.save_image(
+    torch.from_numpy(out[key]), join(output_path, out_file),
+    nrow=1, normalize=True, range=(-1., 1.)
+)

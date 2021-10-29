@@ -72,16 +72,19 @@ class Generator(nn.Module):
                 z = torch.cat([z, a_tile], dim=1)
         return z
     
-    def forward(self, x, a=None, mode='enc-dec'):
-        if mode == 'enc-dec':
-            assert a is not None, 'No given attribute.'
-            return self.decode(self.encode(x), a)
-        if mode == 'enc':
-            return self.encode(x)
-        if mode == 'dec':
-            assert a is not None, 'No given attribute.'
-            return self.decode(x, a)
-        raise Exception('Unrecognized mode: ' + mode)
+    # def forward(self, x, a=None, mode='enc-dec'):
+    #     if mode == 'enc-dec':
+    #         assert a is not None, 'No given attribute.'
+    #         return self.decode(self.encode(x), a)
+    #     if mode == 'enc':
+    #         return self.encode(x)
+    #     if mode == 'dec':
+    #         assert a is not None, 'No given attribute.'
+    #         return self.decode(x, a)
+    #     raise Exception('Unrecognized mode: ' + mode)
+
+    def forward(self, x, a):
+        return self.decode(self.encode(x), a)
 
 class Discriminators(nn.Module):
     # No instancenorm in fcs in source code, which is different from paper.

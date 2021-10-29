@@ -4,6 +4,8 @@
 # visit https://opensource.org/licenses/MIT.
 
 """Entry point for testing AttGAN network."""
+import coremltools as ct
+from coremltools.models.neural_network import quantization_utils
 
 import argparse
 import json
@@ -22,11 +24,11 @@ from utils import find_model
 
 def parse(args=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--experiment_name', dest='experiment_name', required=True)
+    parser.add_argument('--experiment_name', dest='experiment_name', default='256_shortcut1_inject1_none_hq')
     parser.add_argument('--test_int', dest='test_int', type=float, default=1.0)
     parser.add_argument('--num_test', dest='num_test', type=int)
     parser.add_argument('--load_epoch', dest='load_epoch', type=str, default='latest')
-    parser.add_argument('--custom_img', action='store_true')
+    parser.add_argument('--custom_img', action='store_true', default=True)
     parser.add_argument('--custom_data', type=str, default='./data/custom')
     parser.add_argument('--custom_attr', type=str, default='./data/list_attr_custom.txt')
     parser.add_argument('--gpu', action='store_true')
@@ -34,7 +36,6 @@ def parse(args=None):
     return parser.parse_args(args)
 
 args_ = parse()
-print(args_)
 
 with open(join('output', args_.experiment_name, 'setting.txt'), 'r') as f:
     args = json.load(f, object_hook=lambda d: argparse.Namespace(**d))
@@ -49,9 +50,6 @@ args.custom_data = args_.custom_data
 args.custom_attr = args_.custom_attr
 args.n_attrs = len(args.attrs)
 args.betas = (args.beta1, args.beta2)
-
-print(args)
-
 
 if args.custom_img:
     output_path = join('output', args.experiment_name, 'custom_testing')
@@ -70,51 +68,25 @@ test_dataloader = data.DataLoader(
     test_dataset, batch_size=1, num_workers=args.num_workers,
     shuffle=False, drop_last=False
 )
-if args.num_test is None:
-    print('Testing images:', len(test_dataset))
-else:
-    print('Testing images:', min(len(test_dataset), args.num_test))
-
 
 attgan = AttGAN(args)
 attgan.load(find_model(join('output', args.experiment_name, 'checkpoint'), args.load_epoch))
-progressbar = Progressbar()
 
 attgan.eval()
-for idx, (img_a, att_a) in enumerate(test_dataloader):
-    if args.num_test is not None and idx == args.num_test:
-        break
-    
-    img_a = img_a.cuda() if args.gpu else img_a
-    att_a = att_a.cuda() if args.gpu else att_a
-    att_a = att_a.type(torch.float)
-    
-    att_b_list = [att_a]
-    for i in range(args.n_attrs):
-        tmp = att_a.clone()
-        tmp[:, i] = 1 - tmp[:, i]
-        tmp = check_attribute_conflict(tmp, args.attrs[i], args.attrs)
-        att_b_list.append(tmp)
 
-   #Bald Bangs Black_Hair Blond_Hair Brown_Hair Bushy_Eyebrows Eyeglasses Male Mouth_Slightly_Open Mustache No_Beard Pale_Skin Young
-    with torch.no_grad():
-        samples = [img_a]
-        for i, att_b in enumerate(att_b_list):
-            att_b_ = (att_b * 2 - 1) * args.thres_int
-            if i > 0:
-                att_b_[..., i - 1] = att_b_[..., i - 1] * args.test_int / args.thres_int
-            if i == 13:
-                print("att_b_", i, att_b_)
-                att_b_= torch.from_numpy(np.array([[-0.5, 0.5, 0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5,  0.5, -0.5, 1.0]])).type(torch.float)
-                print("att_b_", i, att_b_)
-                samples.append(attgan.G(img_a, att_b_))
-        samples = torch.cat(samples, dim=3)
-        if args.custom_img:
-            out_file = test_dataset.images[idx]
-        else:
-            out_file = '{:06d}.jpg'.format(idx + 182638)
-        vutils.save_image(
-            samples, join(output_path, out_file),
-            nrow=1, normalize=True, range=(-1., 1.)
-        )
-        print('{:s} done!'.format(out_file))
+for idx, (img_a, att_a) in enumerate(test_dataloader):
+    image = img_a
+    att_b_ = att_a
+    break
+
+att_b_= torch.from_numpy(np.array([[-0.5, 0.5, 0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5,  0.5, -0.5, 1.0]])).type(torch.float)
+
+traced_model = torch.jit.trace(attgan.G, (image, att_b_))
+
+model = ct.convert(traced_model, inputs=[ct.ImageType(name="image", shape=image.shape, bias=[-1,-1,-1], scale=1/127.0), ct.TensorType(name="style", shape=att_b_.shape)])
+
+# model.save('attgan.mlmodel')
+
+model_fp16 = quantization_utils.quantize_weights(model, nbits=16)
+model_fp16.save('attgan16.mlmodel')
+
